@@ -3,8 +3,6 @@
 
 #include <stdint.h>
 
-#define GPIO_BASE 0xFE200000UL  // Basisadresse GPIO (für Pi 4 und Pi Zero 2 W, beachten!)
-
 typedef enum {
     GPIO_INPUT = 0,
     GPIO_OUTPUT = 1,

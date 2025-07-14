@@ -27,6 +27,9 @@ $(BUILD)/$(TARGET).elf: $(OBJS)
 
 $(BUILD)/$(TARGET).img: $(BUILD)/$(TARGET).elf
 	$(OBJCOPY) $< -O binary $@
+	dd if=/dev/zero bs=1 count=$$((512 - $$(stat -c%s $@) % 512)) >> $@ || true
+	printf '\x55\xAA' | dd of=build/kernel8.img bs=1 seek=510 count=2 conv=notrunc
+	stat -c%s build/kernel8.img
 
 $(BUILD)/$(PRODUCT): $(BUILD)/$(TARGET).img
 	mkdir -p $(BUILD)/$(PRODUCT)

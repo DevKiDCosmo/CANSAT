@@ -1,0 +1,293 @@
+\documentclass{banko}
+
+\usepackage{graphicx}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{csquotes}
+\usepackage{hyperref}
+\usepackage{lipsum}
+
+\title{Firmware for the BCM2835}
+\BPNauthor*{Duy Nam Schlitz}{ÍSAC Sciences and The Namischen Werke}{duynamschlitzresearch@gmail.com}
+\date{January 2025}
+\BPNundertitle{For BCM2835 - Chip Set Aarch64}
+\BPNsubundertitle{Layout, Language, Logic}
+\BPNyear{2025}
+\BPNlocation{Frankfurt}
+\BPNdates{\today}
+\BPNcopyright{2025}{Duy Nam Schlitz}
+\BPNarchive{BANKO-0001}
+\BPNmode{0}
+\BPNRevision{1}
+\BPNVersion{1}
+
+\abstract{
+	This document demonstrates the capabilities of the `banko` LaTeX class. It supports multilingual content (CJK), mathematical typesetting, references, structured headings, and customized metadata. This belongs to a collection that also includes Sazuko and the new coming Kougi templates. By the way I am not a Japanese people but I can Japanese. \lipsum[1]
+}
+
+\hypersetup{
+	pdftitle={Banko Showcase},
+	pdfauthor={Duy Nam Schlitz},
+	pdfsubject={Template Demo},
+	pdfkeywords={LaTeX, Template, Multilingual, Math, Banko}
+}
+
+\bibliography{.bib}
+
+\begin{document}
+	
+	\maketitle
+	
+	\romanPage
+	
+	\tableofcontents
+	
+	\clearpage
+	\arabicPage
+	
+	\part{Boot and Initializing}
+	
+	\section{Compiling the Code}
+	
+	\subsection{Bare Metal Programming}
+	
+	\subsection{Boot Files}
+	
+	\subsection{Linker File}
+	
+	\subsection{Kernel}
+	
+	\section{MMIO}
+	
+	\subsection{UART}
+	
+	\subsection{SPI / I2C}
+	
+	\subsection{Interrupt Controller}
+	
+	\subsection{Set VBAR\_EL1 (Exception Table for IRQs, FIQ, SError, SVC etc.)}
+	
+	\section{GPIO}
+	
+	\subsection{Setting GPIO Modes}
+	
+	The physical base address of the GPIO is 0x3F200000, which corresponds to 0x7E200000 in the bus address space. The registers from 0 to 49 are divided across 5 registers. The offset for a given pin is calculated as: 
+	\[ \texttt{0x04} * (p_d \mod 10) \]. \footnote{We define the selected register as \[ r = p_d \mod 10 \]}
+	
+	To configure a GPIO pin, we assign it one of 8 possible modes. For simple projects, only the Input and Output modes are typically required. The mode is set by modifying the appropriate GPFSELn register. Each pin has a 3-bit field, and its position is calculated as
+	
+	\[p = 3 * (p_d \mod 10)\]
+	
+	We shift the desired mode value to this position and update the register using the |= operator or using a pointer.
+	
+	The last register is somewhat exceptional: it only contains GPIO pins 50 to 53. However, all other calculations and bit manipulations remain the same.
+	
+	\cite{BCM2835Peripherals}
+	
+	\subsection{GPSETn and GPCLRn}
+	
+	\subsubsection{Send HIGH to GPIO}
+		
+	The first GPSET register is used to set GPIO pins 0 to 31 to HIGH. The second GPSET register controls GPIO pins 32 to 53, also setting them to HIGH when the corresponding bits are written with 1.
+
+	To set a pin to HIGH, write a 1 to the n-th bit of the corresponding GPSET register. All other bits should remain 0. Turning a bit to 0 wouldn't affect the output.
+	
+	\subsubsection{Send LOW to GPIO}
+	
+	Just like GPSETn, the GPCLR function is split across two registers. To set a pin to LOW, write a 1 to the corresponding bit position—just as you would with GPSETn. Both registers are write-only, and setting a bit has an immediate effect; reading the register has no meaning.
+	
+	\cite{BCM2835Peripherals}
+	
+	\subsection{Read GPIO}
+	
+	Just like GPSETn and GPCLRn, the GPLEVn (GPIO Pin Level) register is also divided into two parts. Each bit corresponds to the current logic level of one GPIO pin:
+	
+	\begin{itemize}
+		\item 1 means the pin is HIGH
+		\item 0 means the pin is LOW
+	\end{itemize}
+	
+	Unlike GPSET and GPCLR, which are write-only, GPLEV is read-only. You read the register and check the n-th bit to determine the current state of GPIO pin n.
+	
+	\section{Time and Delay}
+	
+	In bare-metal systems, timing is essential for precise GPIO control, communication protocols, and delay handling without relying on operating system services. This section introduces different delay mechanisms for the Raspberry Pi Zero 2 W, from basic NOPs to high-resolution hardware timers.
+	
+	\subsection{NOP}
+	
+	A \texttt{NOP} (No Operation) instruction can be used for very short delays. It consumes a single CPU cycle and is typically implemented in ARM with:
+	
+	\begin{verbatim}
+		nop
+	\end{verbatim}
+	
+	However, such delays are imprecise because they:
+	\begin{itemize}
+		\item depend on CPU clock speed (which may vary),
+		\item are not consistent across architectures or cache states,
+		\item cannot produce exact microsecond/millisecond delays.
+	\end{itemize}
+	
+	They are suitable for very short or loop-compensated waits.
+	
+	\subsection{Loop with Subs}
+	
+	A more stable delay can be implemented with a decrementing loop, using the \texttt{SUBS} instruction and branching:
+	
+	\begin{verbatim}
+		mov r0, #100000       @ number of iterations
+		delay_loop:
+		subs r0, r0, #1       @ decrement
+		bne delay_loop        @ branch if not zero
+	\end{verbatim}
+	
+	While more flexible than \texttt{NOP}, this method is still CPU-speed dependent. Calibration is required to match time units.
+	
+	\subsection{MMIO Timer}
+	
+	The BCM2835/2836/2837 SoC provides a \textbf{System Timer} accessible via memory-mapped I/O (MMIO). It counts at 1 MHz and is ideal for microsecond-precision delays.
+	
+	\paragraph{Base Address (for Pi Zero 2 W):}
+	\begin{verbatim}
+		System Timer Base: 0x3F003000
+		CLO (Low 32-bit Counter): 0x3F003004
+		CHI (High 32-bit Counter): 0x3F003008
+	\end{verbatim}
+	
+	\paragraph{Access (C Example):}
+	\begin{verbatim}
+		#define SYS_TIMER_CLO ((volatile unsigned int*)(0x3F003004))
+		
+		void delay_us(unsigned int us) {
+			unsigned int start = *SYS_TIMER_CLO;
+			while ((*SYS_TIMER_CLO - start) < us);
+		}
+	\end{verbatim}
+	
+	This provides reliable timing with 1 µs resolution.
+	
+	\subsection{cntvct\_el0}
+	
+	ARMv8 systems include a \textbf{Generic Timer} that can be read using the special register \texttt{cntvct\_el0}, which increments at the frequency specified by \texttt{cntfrq\_el0}.
+	
+	\paragraph{Example (in C with inline ASM):}
+	\begin{verbatim}
+		unsigned int get_cntfrq() {
+			unsigned int freq;
+			asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+			return freq;
+		}
+		
+		unsigned long long get_cntvct() {
+			unsigned long long val;
+			asm volatile("mrs %0, cntvct_el0" : "=r"(val));
+			return val;
+		}
+	\end{verbatim}
+	
+	You can compute nanosecond-precision time via:
+	
+	\[
+	\text{Time (ns)} = \frac{\texttt{cntvct\_el0} \times 10^9}{\texttt{cntfrq\_el0}}
+	\]
+	
+	\subsection{Building a System Timer}
+	
+	A reusable system timer should abstract the hardware layer. You can build your own module that provides millisecond and microsecond timing with multiple backends.
+	
+	\subsubsection{System Timer CLO}
+	
+	The MMIO-based system timer (\texttt{CLO}) is best used for:
+	\begin{itemize}
+		\item delays in microseconds/milliseconds,
+		\item busy-wait loops,
+		\item GPIO signal timing.
+	\end{itemize}
+	
+	It requires no initialization and is automatically incremented by hardware.
+	
+	\subsubsection{ARM Generic Timer}
+	
+	The ARM Generic Timer is a high-precision 64-bit timer built directly into the ARMv8-A CPU core. It provides access to the current cycle count and its frequency via special system registers. Unlike peripheral-based timers (e.g., MMIO System Timer), the ARM Generic Timer operates independently of memory-mapped I/O and provides nanosecond-level resolution, making it ideal for time-critical applications.
+	
+	\paragraph{Registers used:}
+	\begin{itemize}
+		\item \texttt{cntvct\_el0}: Counter register – current value of the virtual timer.
+		\item \texttt{cntfrq\_el0}: Frequency register – holds the frequency (in Hz) at which \texttt{cntvct\_el0} increments.
+	\end{itemize}
+	
+	The frequency is typically a fixed hardware value (e.g., 19.2 MHz on the Raspberry Pi). This means the counter increases by approximately 19.2 million ticks per second.
+	
+	\paragraph{Reading the timer in C (bare-metal):}
+	
+	\begin{verbatim}[language=C]
+		static inline uint64_t read_cntvct() {
+			uint64_t value;
+			asm volatile ("mrs %0, cntvct_el0" : "=r"(value));
+			return value;
+		}
+		
+		static inline uint64_t read_cntfrq() {
+			uint64_t freq;
+			asm volatile ("mrs %0, cntfrq_el0" : "=r"(freq));
+			return freq;
+		}
+	\end{verbatim}
+	
+	\paragraph{Creating a microsecond delay:}
+	
+	\begin{verbatim}[language=C]
+		void delay_us(uint64_t microseconds) {
+			uint64_t freq = read_cntfrq(); // e.g., 19200000 Hz
+			uint64_t ticks = (freq / 1000000) * microseconds;
+			uint64_t start = read_cntvct();
+			while ((read_cntvct() - start) < ticks);
+		}
+	\end{verbatim}
+	
+	\paragraph{Advantages of ARM Generic Timer:}
+	\begin{itemize}
+		\item \textbf{High Resolution:} Nanosecond precision is possible depending on clock.
+		\item \textbf{Reliable and Consistent:} Unlike MMIO-based timers, no memory-mapped I/O overhead.
+		\item \textbf{Independent of peripherals:} Works solely in CPU core space – immune to peripheral resets or changes.
+		\item \textbf{Ideal for profiling:} Allows benchmarking and profiling of short function calls or routines.
+	\end{itemize}
+	
+	\paragraph{Practical Considerations:}
+	\begin{itemize}
+		\item Ensure the timer is enabled by default (usually done by firmware). In most Raspberry Pi SoCs, this is already the case.
+		\item The counter is 64-bit and free-running; no wraparound for hundreds of years at typical frequencies.
+		\item If running with EL1/EL2/EL3, access may need to be enabled using system control registers like \texttt{CNTKCTL\_EL1}.
+	\end{itemize}
+	
+	\paragraph{Sample Assembly Delay (approximate):}
+	
+	\begin{verbatim}
+		// Delay ~1 millisecond assuming 19.2 MHz
+		mrs x0, cntfrq_el0          // Get frequency
+		lsr x0, x0, #10             // Divide by ~1000 (approx)
+		mrs x1, cntvct_el0          // Get current timer
+		add x0, x0, x1              // Target tick
+		wait_loop:
+		mrs x2, cntvct_el0
+		cmp x2, x0
+		b.lo wait_loop
+	\end{verbatim}
+	
+	\paragraph{Use cases:}
+	\begin{itemize}
+		\item GPIO pulse-width generation.
+		\item Performance measurement (cycle counters).
+		\item OS scheduling (bare-metal or hypervisor environments).
+	\end{itemize}
+	
+	\paragraph{Summary:}
+	
+	The ARM Generic Timer is the most accurate and efficient timing mechanism available in ARMv8-based systems like the Raspberry Pi Zero 2 W. Its direct register access, high frequency, and isolation from MMIO make it essential for precise timekeeping in bare-metal applications.
+	
+	
+	\section{Sources}
+	
+	\printbibliography
+	
+\end{document}

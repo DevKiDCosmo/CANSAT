@@ -42,3 +42,5 @@
 
 ./firmware/build
 ./firmware/gcc-arm-11.2-2022.02-x86_64-aarch64-none-elf
+./software/build
+./software/bcm2835-1.75
