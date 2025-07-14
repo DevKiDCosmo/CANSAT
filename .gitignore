@@ -39,3 +39,6 @@
 
 # debug information files
 *.dwo
+
+./firmware/build
+./firmware/gcc-arm-11.2-2022.02-x86_64-aarch64-none-elf
