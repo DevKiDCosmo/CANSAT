@@ -1,8 +1,33 @@
-ENTRY(kernel_main)
-SECTIONS {
-  . = 0x80000;
-  .text : { *(.text*) }
-  .rodata : { *(.rodata*) }
-  .data : { *(.data*) }
-  .bss : { *(.bss*) }
+ENTRY(_start)
+
+SECTIONS
+{
+    . = 0x8000;
+    __start = .;
+    .text :
+    {
+        *(.text._start)
+        *(.text)
+    }
+    . = ALIGN(4096);
+    .rodata :
+    {
+        *(.rodata)
+    }
+    . = ALIGN(4096);
+    .data :
+    {
+        *(.data)
+    }
+    . = ALIGN(4096);
+    __bss_start = .;
+    .bss :
+    {
+        bss = .;
+        *(.bss)
+    }
+    . = ALIGN(4096);
+    __bss_end = .;
+    __bss_size = __bss_end - __bss_start;
+    __end = .;
 }
